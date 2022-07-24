@@ -39,7 +39,7 @@ public class TestLeafNode {
     // 1 second max per method tested.
     @Rule
     public TestRule globalTimeout = new DisableOnDebug(Timeout.millis((long) (
-                1000 * TimeoutScaling.factor)));
+            1000 * TimeoutScaling.factor)));
 
     private static DataBox d0 = new IntDataBox(0);
     private static DataBox d1 = new IntDataBox(1);
@@ -71,7 +71,7 @@ public class TestLeafNode {
     // Helpers /////////////////////////////////////////////////////////////////
     private void setBPlusTreeMetadata(Type keySchema, int order) {
         this.metadata = new BPlusTreeMetadata("test", "col", keySchema, order,
-                                              0, DiskSpaceManager.INVALID_PAGE_NUM, -1);
+                0, DiskSpaceManager.INVALID_PAGE_NUM, -1);
     }
 
     private LeafNode getEmptyLeaf(Optional<Long> rightSibling) {
@@ -129,6 +129,52 @@ public class TestLeafNode {
 
     @Test
     @Category(PublicTests.class)
+    public void testOverflowBulkLoad() {
+        int d = 10;
+        float fillFactor = 0.7f;
+        setBPlusTreeMetadata(Type.intType(), d);
+        LeafNode leaf = getEmptyLeaf(Optional.empty());
+
+        List<Pair<DataBox, RecordId>> data = new ArrayList<>();
+        int size = (int) (4 * d * fillFactor) - 1;
+        for (int i = 0; i < size; ++i) {
+            DataBox key = new IntDataBox(i);
+            RecordId rid = new RecordId(i, (short) i);
+            data.add(i, new Pair<>(key, rid));
+        }
+        int fillIndex = (int) (2 * d * fillFactor);
+
+        Optional<Pair<DataBox, Long>> split = leaf.bulkLoad(data.iterator(), fillFactor);
+        assert split.isPresent();
+        Pair<DataBox, Long> splitPair = split.get();
+
+        // Then read the leaf from disk.
+        long pageNum = leaf.getPage().getPageNum();
+        LeafNode fromDisk = LeafNode.fromBytes(metadata, bufferManager, treeContext, pageNum);
+        assert fromDisk.getKeys().size() == fillIndex;
+
+        // Then read the split leaf from disk.
+        long splitPageNum = splitPair.getSecond();
+        LeafNode splitFromDisk = LeafNode.fromBytes(metadata, bufferManager, treeContext, splitPageNum);
+        assert splitFromDisk.getKeys().size() == 2 * d + 1 - fillIndex;
+
+        // Check to see that we can read from disk.
+        for (int i = 0; i < fillIndex; ++i) {
+            IntDataBox key = new IntDataBox(i);
+            RecordId rid = new RecordId(i, (short) i);
+            assertEquals(Optional.of(rid), fromDisk.getKey(key));
+        }
+
+        // Check to see that we can read split page from disk.
+        for (int i = 0; i < 2 * d + 1 - fillIndex; ++i) {
+            IntDataBox key = new IntDataBox(i + fillIndex);
+            RecordId rid = new RecordId(i + fillIndex, (short) (i + fillIndex));
+            assertEquals(Optional.of(rid), splitFromDisk.getKey(key));
+        }
+    }
+
+    @Test
+    @Category(PublicTests.class)
     public void testNoOverflowPuts() {
         int d = 5;
         setBPlusTreeMetadata(Type.intType(), d);
@@ -173,6 +219,48 @@ public class TestLeafNode {
             IntDataBox key = new IntDataBox(i);
             RecordId rid = new RecordId(i, (short) i);
             assertEquals(Optional.of(rid), fromDisk.getKey(key));
+        }
+    }
+
+    @Test
+    @Category(PublicTests.class)
+    public void testOverflowPutsFromDisk() {
+        // Requires both fromBytes and put to be implemented correctly.
+        int d = 5;
+        setBPlusTreeMetadata(Type.intType(), d);
+        LeafNode leaf = getEmptyLeaf(Optional.empty());
+
+        // Populate the leaf.
+        for (int i = 0; i < 2 * d; ++i) {
+            leaf.put(new IntDataBox(i), new RecordId(i, (short) i));
+        }
+        //split
+        Optional<Pair<DataBox, Long>> split = leaf.put(new IntDataBox(2 * d), new RecordId(2 * d, (short) (2 * d)));
+        assert split.isPresent();
+        Pair<DataBox, Long> splitPair = split.get();
+
+        // Then read the leaf from disk.
+        long pageNum = leaf.getPage().getPageNum();
+        LeafNode fromDisk = LeafNode.fromBytes(metadata, bufferManager, treeContext, pageNum);
+        assert fromDisk.getKeys().size() == d;
+
+        // Then read the split leaf from disk.
+        long splitPageNum = splitPair.getSecond();
+        LeafNode splitFromDisk = LeafNode.fromBytes(metadata, bufferManager, treeContext, splitPageNum);
+        assert splitFromDisk.getKeys().size() == d + 1;
+
+        // Check to see that we can read from disk.
+        for (int i = 0; i < d; ++i) {
+            IntDataBox key = new IntDataBox(i);
+            RecordId rid = new RecordId(i, (short) i);
+            assertEquals(Optional.of(rid), fromDisk.getKey(key));
+        }
+
+        // Check to see that we can read split page from disk.
+        for (int i = 0; i < d + 1; ++i) {
+            IntDataBox key = new IntDataBox(i + d);
+            RecordId rid = new RecordId(i + d, (short) (i + d));
+            assertEquals(Optional.of(rid), splitFromDisk.getKey(key));
         }
     }
 

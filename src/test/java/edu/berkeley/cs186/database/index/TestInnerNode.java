@@ -39,7 +39,7 @@ public class TestInnerNode {
     // 1 second max per method tested.
     @Rule
     public TestRule globalTimeout = new DisableOnDebug(Timeout.millis((long) (
-                1000 * TimeoutScaling.factor)));
+            1000 * TimeoutScaling.factor)));
 
     // inner, leaf0, leaf1, and leaf2 collectively form the following B+ tree:
     //
@@ -180,7 +180,7 @@ public class TestInnerNode {
 
     private void setBPlusTreeMetadata(Type keySchema, int order) {
         this.metadata = new BPlusTreeMetadata("test", "col", keySchema, order,
-                                              0, DiskSpaceManager.INVALID_PAGE_NUM, -1);
+                0, DiskSpaceManager.INVALID_PAGE_NUM, -1);
     }
 
     // See comment above.
@@ -265,6 +265,125 @@ public class TestInnerNode {
 
     @Test
     @Category(PublicTests.class)
+    public void testLeafOverflowPuts() {
+        IntDataBox key = null;
+        RecordId rid = null;
+
+        // Add to leaf 0.
+        key = new IntDataBox(7);
+        rid = new RecordId(7, (short) 7);
+        assertEquals(Optional.empty(), inner.put(key, rid));
+        keys0.add(key);
+        rids0.add(rid);
+        checkTreeMatchesExpectations();
+
+        // Add to leaf 0, then leaf 0 will split.
+        key = new IntDataBox(5);
+        rid = new RecordId(5, (short) 5);
+        Optional<Pair<DataBox, Long>> splitKeyAndNewSplitPageNum = inner.put(key, rid);
+        assert !splitKeyAndNewSplitPageNum.isPresent();
+        innerKeys.add(0, new IntDataBox(3));
+        assertEquals(innerKeys, inner.getKeys());
+        keys0 = keys0.subList(0, 2);
+        rids0 = rids0.subList(0, 2);
+        LeafNode leaf0Node = LeafNode.fromBytes(metadata, bufferManager, treeContext, inner.getChildren().get(0));
+        assertEquals(keys0, leaf0Node.getKeys());
+        assertEquals(rids0, leaf0Node.getRids());
+
+        LeafNode addLeafNode = LeafNode.fromBytes(metadata, bufferManager, treeContext, inner.getChildren().get(1));
+        List<DataBox> addLeafNodeKeys = Arrays.asList(new IntDataBox(3), new IntDataBox(5), new IntDataBox(7));
+        List<RecordId> addLeafNodeRids = Arrays.asList(new RecordId(3, (short) 3), new RecordId(5, (short) 5), new RecordId(7, (short) 7));
+        assertEquals(addLeafNodeKeys, addLeafNode.getKeys());
+        assertEquals(addLeafNodeRids, addLeafNode.getRids());
+    }
+
+    @Test
+    @Category(PublicTests.class)
+    public void testInnerOverflowPuts() {
+        IntDataBox key = null;
+        RecordId rid = null;
+        Optional<Pair<DataBox, Long>> splitKeyAndNewSplitPageNum;
+
+        // Add to leaf 0.
+        key = new IntDataBox(7);
+        rid = new RecordId(7, (short) 7);
+        splitKeyAndNewSplitPageNum = inner.put(key, rid);
+        assert !splitKeyAndNewSplitPageNum.isPresent();
+
+        // Add to leaf 0, then leaf 0 will split;
+        // leaf0(1,2,3,7)->leaf0(1,2)+leaf0Split(3,5,7).
+        // inner(10,20)->inner(3,10,20)
+        key = new IntDataBox(5);
+        rid = new RecordId(5, (short) 5);
+        splitKeyAndNewSplitPageNum = inner.put(key, rid);
+        assert !splitKeyAndNewSplitPageNum.isPresent();
+        innerKeys.add(0, new IntDataBox(3));
+        assertEquals(innerKeys, inner.getKeys());
+
+        // Add to leaf1.
+        key = new IntDataBox(18);
+        rid = new RecordId(18, (short) 18);
+        splitKeyAndNewSplitPageNum = inner.put(key, rid);
+        assert !splitKeyAndNewSplitPageNum.isPresent();
+
+        // Add to leaf1, then leaf1 will split;
+        // leaf1(11,12,13,18)->leaf1(11,12)+leaf1Split(13,15,18).
+        // inner(3,10,20)->inner(3,10,13,20)
+        key = new IntDataBox(15);
+        rid = new RecordId(15, (short) 15);
+        splitKeyAndNewSplitPageNum = inner.put(key, rid);
+        assert !splitKeyAndNewSplitPageNum.isPresent();
+        innerKeys.add(2, new IntDataBox(13));
+        assertEquals(innerKeys, inner.getKeys());
+
+        // Add to leaf2.
+        key = new IntDataBox(28);
+        rid = new RecordId(28, (short) 28);
+        splitKeyAndNewSplitPageNum = inner.put(key, rid);
+        assert !splitKeyAndNewSplitPageNum.isPresent();
+
+        // Add to leaf2, then leaf2 will split;
+        // leaf2(21,22,23,28)->leaf2(21,22)+leaf2Split(23,25,28).
+        // inner(3,10,13,20)->inner(3,10)+innerSplit(20,23)
+        key = new IntDataBox(25);
+        rid = new RecordId(25, (short) 25);
+        splitKeyAndNewSplitPageNum = inner.put(key, rid);
+        assert splitKeyAndNewSplitPageNum.isPresent();
+        DataBox splitKey = splitKeyAndNewSplitPageNum.get().getFirst();
+        Long addSplitPageNum = splitKeyAndNewSplitPageNum.get().getSecond();
+        assert splitKey.getInt() == 13;
+        innerKeys = innerKeys.subList(0, 2);
+        assertEquals(innerKeys, inner.getKeys());
+        InnerNode addInnerNode = InnerNode.fromBytes(metadata, bufferManager, treeContext, addSplitPageNum);
+        assertEquals(Arrays.asList(new IntDataBox(20), new IntDataBox(23)), addInnerNode.getKeys());
+
+
+        assert inner.getChildren().size() == 3;
+        assert addInnerNode.getChildren().size() == 3;
+
+        assertInnerChildrenEquals(inner, 0, 1, 2);
+        assertInnerChildrenEquals(inner, 1, 3, 5, 7);
+        assertInnerChildrenEquals(inner, 2, 11, 12);
+        assertInnerChildrenEquals(addInnerNode, 0, 13, 15, 18);
+        assertInnerChildrenEquals(addInnerNode, 1, 21, 22);
+        assertInnerChildrenEquals(addInnerNode, 2, 23, 25, 28);
+
+    }
+
+    private void assertInnerChildrenEquals(InnerNode innerNode, int childIndex, int... keyVals) {
+        LeafNode innerChild = LeafNode.fromBytes(metadata, bufferManager, treeContext, innerNode.getChildren().get(childIndex));
+        List<DataBox> innerChildKeys = new ArrayList<>();
+        List<RecordId> innerChildRids = new ArrayList<>();
+        for (int i = 0; i < keyVals.length; i++) {
+            innerChildKeys.add(new IntDataBox(keyVals[i]));
+            innerChildRids.add(new RecordId(keyVals[i], (short) keyVals[i]));
+        }
+        assertEquals(innerChildKeys, innerChild.getKeys());
+        assertEquals(innerChildRids, innerChild.getRids());
+    }
+
+    @Test
+    @Category(PublicTests.class)
     public void testRemove() {
         // Remove from leaf 0.
         inner.remove(new IntDataBox(1));
@@ -313,6 +432,91 @@ public class TestInnerNode {
         keys2.remove(0);
         rids2.remove(0);
         checkTreeMatchesExpectations();
+    }
+
+    @Test
+    @Category(SystemTests.class)
+    public void testOverFlowBulkLoad() {
+        DiskSpaceManager diskSpaceManager = new MemoryDiskSpaceManager();
+        diskSpaceManager.allocPart(0);
+        BufferManager bufferManager = new BufferManager(diskSpaceManager, new DummyRecoveryManager(), 1024,
+                new ClockEvictionPolicy());
+        DummyLockContext treeContext = new DummyLockContext();
+        BPlusTreeMetadata metadata = new BPlusTreeMetadata("test_inner_bulk_node", "col", Type.intType(), 3,
+                0, DiskSpaceManager.INVALID_PAGE_NUM, -1);
+        float fillFactor = (float) 2 / 3;
+
+        //leaf 2
+        List<DataBox> keys2 = new ArrayList<>();
+        keys2.add(new IntDataBox(5));
+        keys2.add(new IntDataBox(6));
+        keys2.add(new IntDataBox(7));
+        List<RecordId> rids2 = new ArrayList<>();
+        rids2.add(new RecordId(11111, (short) 5));
+        rids2.add(new RecordId(11111, (short) 6));
+        rids2.add(new RecordId(11111, (short) 7));
+        Optional<Long> sibling2 = Optional.empty();
+        LeafNode leaf2 = new LeafNode(metadata, bufferManager, keys2, rids2, sibling2, treeContext);
+
+        //leaf 1
+        List<DataBox> keys1 = new ArrayList<>();
+        keys1.add(new IntDataBox(1));
+        keys1.add(new IntDataBox(2));
+        keys1.add(new IntDataBox(3));
+        keys1.add(new IntDataBox(4));
+        List<RecordId> rids1 = new ArrayList<>();
+        rids1.add(new RecordId(11111, (short) 1));
+        rids1.add(new RecordId(11111, (short) 2));
+        rids1.add(new RecordId(11111, (short) 3));
+        rids1.add(new RecordId(11111, (short) 4));
+        Optional<Long> sibling1 = Optional.of(leaf2.getPage().getPageNum());
+        LeafNode leaf1 = new LeafNode(metadata, bufferManager, keys1, rids1, sibling1, treeContext);
+
+        // Inner node
+        List<DataBox> innerKeys = new ArrayList<>();
+        innerKeys.add(new IntDataBox(5));
+
+        List<Long> innerChildren = new ArrayList<>();
+        innerChildren.add(leaf1.getPage().getPageNum());
+        innerChildren.add(leaf2.getPage().getPageNum());
+
+        InnerNode innerNode = new InnerNode(metadata, bufferManager, innerKeys, innerChildren, treeContext);
+
+        List<Pair<DataBox, RecordId>> data = new ArrayList<>();
+        for (int i = 8; i < 32; i++) {
+            data.add(new Pair<>(new IntDataBox(i), new RecordId(1111, (short) i)));
+        }
+        Optional<Pair<DataBox, Long>> splitKeyAndNewPageNumOption = innerNode.bulkLoad(data.iterator(), fillFactor);
+        assert splitKeyAndNewPageNumOption.isPresent();
+        DataBox splitKey = splitKeyAndNewPageNumOption.get().getFirst();
+        assert splitKey.getInt() == 17;
+        Long newPageNum = splitKeyAndNewPageNumOption.get().getSecond();
+        BPlusNode newNode = BPlusNode.fromBytes(metadata, bufferManager, treeContext, newPageNum);
+        assert newNode instanceof InnerNode;
+        InnerNode newInnerNode = (InnerNode) newNode;
+
+        int fillFactorCapacity = (int) (2 * metadata.getOrder() * fillFactor);
+        //check innerNode
+        for (int i = 0; i < innerNode.getKeys().size(); i++) {
+            assert 1 + (i + 1) * fillFactorCapacity == innerNode.getKeys().get(i).getInt();
+        }
+        for (int i = 0; i < innerNode.getChildren().size(); i++) {
+            LeafNode leafNode = (LeafNode) BPlusNode.fromBytes(metadata, bufferManager, treeContext, innerNode.getChildren().get(i));
+            for (int j = 0; j < leafNode.getKeys().size(); j++) {
+                assert (i * fillFactorCapacity + j + 1) == leafNode.getKeys().get(j).getInt();
+            }
+        }
+
+        //check newInnerNode
+        for (int i = 0; i < newInnerNode.getKeys().size(); i++) {
+            assert 17 + (i + 1) * fillFactorCapacity == newInnerNode.getKeys().get(i).getInt();
+        }
+        for (int i = 0; i < newInnerNode.getChildren().size(); i++) {
+            LeafNode leafNode = (LeafNode) BPlusNode.fromBytes(metadata, bufferManager, treeContext, newInnerNode.getChildren().get(i));
+            for (int j = 0; j < leafNode.getKeys().size(); j++) {
+                assert i * fillFactorCapacity + j + 17 == leafNode.getKeys().get(j).getInt();
+            }
+        }
     }
 
     @Test
