@@ -1,5 +1,8 @@
 package edu.berkeley.cs186.database.concurrency;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Utility methods to track the relationships between different lock types.
  */
@@ -11,6 +14,41 @@ public enum LockType {
     SIX, // shared intention exclusive
     NL;  // no lock held
 
+    static Boolean[][] COMPATIBLE_MATRIX = new Boolean[][]{
+            {true, true, true, true, true, true},
+            {true, true, true, true, true, false},
+            {true, true, true, false, false, false},
+            {true, true, false, true, false, false},
+            {true, true, false, false, false, false},
+            {true, false, false, false, false, false}
+    };
+    static Boolean[][] PARENT_MATRIX = new Boolean[][]{
+            {true, false, false, false, false, false},
+            {true, true, false, true, false, false},
+            {true, true, true, true, true, true},
+            {true, true, false, true, false, false},
+            {true, true, true, true, true, true},
+            {true, true, true, true, true, true}
+    };
+
+    static Boolean[][] SUBSTITUTABILITY_MATRIX = new Boolean[][]{
+            {true, false, false, false, false, false},
+            {true, true, false, false, false, false},
+            {true, true, true, false, false, false},
+            {true, true, false, true, false, false},
+            {true, true, true, true, true, false},
+            {true, true, true, true, true, true}
+    };
+
+    static LockType[] LOCK_TYPE_ARRAY = new LockType[]{NL, IS, IX, S, SIX, X};
+    static Map<LockType, Integer> LOCK_TYPE_TO_INDEX_MAP = new HashMap<>();
+
+    static {
+        for (int i = 0; i < LOCK_TYPE_ARRAY.length; i++) {
+            LOCK_TYPE_TO_INDEX_MAP.put(LOCK_TYPE_ARRAY[i], i);
+        }
+    }
+
     /**
      * This method checks whether lock types A and B are compatible with
      * each other. If a transaction can hold lock type A on a resource
@@ -21,9 +59,14 @@ public enum LockType {
         if (a == null || b == null) {
             throw new NullPointerException("null lock type");
         }
-        // TODO(proj4_part1): implement
+        // DONE(proj4_part1): implement
 
-        return false;
+        Integer indexA = LOCK_TYPE_TO_INDEX_MAP.get(a);
+        Integer indexB = LOCK_TYPE_TO_INDEX_MAP.get(b);
+        if (indexA == null || indexB == null) {
+            throw new IllegalArgumentException("not support lock type: " + a + " or " + b);
+        }
+        return COMPATIBLE_MATRIX[indexA][indexB];
     }
 
     /**
@@ -35,13 +78,20 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         switch (a) {
-        case S: return IS;
-        case X: return IX;
-        case IS: return IS;
-        case IX: return IX;
-        case SIX: return IX;
-        case NL: return NL;
-        default: throw new UnsupportedOperationException("bad lock type");
+            case S:
+                return IS;
+            case X:
+                return IX;
+            case IS:
+                return IS;
+            case IX:
+                return IX;
+            case SIX:
+                return IX;
+            case NL:
+                return NL;
+            default:
+                throw new UnsupportedOperationException("bad lock type");
         }
     }
 
@@ -53,9 +103,13 @@ public enum LockType {
         if (parentLockType == null || childLockType == null) {
             throw new NullPointerException("null lock type");
         }
-        // TODO(proj4_part1): implement
-
-        return false;
+        // DONE(proj4_part1): implement
+        Integer indexParent = LOCK_TYPE_TO_INDEX_MAP.get(parentLockType);
+        Integer indexChild = LOCK_TYPE_TO_INDEX_MAP.get(childLockType);
+        if (indexParent == null || indexChild == null) {
+            throw new IllegalArgumentException("not support lock type: " + parentLockType + " or " + childLockType);
+        }
+        return PARENT_MATRIX[indexParent][indexChild];
     }
 
     /**
@@ -68,9 +122,13 @@ public enum LockType {
         if (required == null || substitute == null) {
             throw new NullPointerException("null lock type");
         }
-        // TODO(proj4_part1): implement
-
-        return false;
+        // DONE(proj4_part1): implement
+        Integer indexSubstitute = LOCK_TYPE_TO_INDEX_MAP.get(substitute);
+        Integer indexRequired = LOCK_TYPE_TO_INDEX_MAP.get(required);
+        if (indexSubstitute == null || indexRequired == null) {
+            throw new IllegalArgumentException("not support lock type: " + substitute + " or " + required);
+        }
+        return SUBSTITUTABILITY_MATRIX[indexSubstitute][indexRequired];
     }
 
     /**
@@ -83,13 +141,20 @@ public enum LockType {
     @Override
     public String toString() {
         switch (this) {
-        case S: return "S";
-        case X: return "X";
-        case IS: return "IS";
-        case IX: return "IX";
-        case SIX: return "SIX";
-        case NL: return "NL";
-        default: throw new UnsupportedOperationException("bad lock type");
+            case S:
+                return "S";
+            case X:
+                return "X";
+            case IS:
+                return "IS";
+            case IX:
+                return "IX";
+            case SIX:
+                return "SIX";
+            case NL:
+                return "NL";
+            default:
+                throw new UnsupportedOperationException("bad lock type");
         }
     }
 }
