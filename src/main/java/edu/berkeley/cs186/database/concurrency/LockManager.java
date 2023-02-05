@@ -98,13 +98,11 @@ public class LockManager {
          */
         public void releaseLock(Lock lock) {
             // TODO(proj4_part1): implement
-            locks.remove(lock);
             Iterator<Lock> iterator = locks.iterator();
             while (iterator.hasNext()) {
                 Lock next = iterator.next();
-                if (next.name.equals(lock.name)) {
-                    locks.remove(next);
-                    break;
+                if (next.transactionNum.equals(lock.transactionNum)) {
+                    iterator.remove();
                 }
             }
             processQueue();
@@ -136,20 +134,21 @@ public class LockManager {
             // TODO(proj4_part1): implement
             while (requests.hasNext()) {
                 LockRequest request = requests.next();
-                if (!this.checkCompatible(request.lock.lockType, -1)) {
+                if (!this.checkCompatible(request.lock.lockType, request.transaction.getTransNum())) {
                     break;
                 }
                 waitingQueue.remove(request);
-                locks.add(request.lock);
-                addOrUpdateLockToTransaction(request.lock);
                 if (request.releasedLocks != null && request.releasedLocks.size() > 0) {
                     for (Lock releaseLock : request.releasedLocks) {
-                        if (releaseLock.name.equals(request.lock.name)) {
-                            continue;
-                        }
+//                        if (releaseLock.name.equals(request.lock.name)) {
+//                            continue;
+//                        }
                         release(this, request.transaction, releaseLock.name);
                     }
                 }
+                locks.add(request.lock);
+                addOrUpdateLockToTransaction(request.lock);
+
                 request.transaction.unblock();
             }
             return;
@@ -241,9 +240,8 @@ public class LockManager {
 
         boolean compatible = resourceEntry.checkCompatible(lockType, transaction.getTransNum());
         Lock acquireLock = new Lock(name, lockType, transaction.getTransNum());
-        if (compatible) {
-            resourceEntry.grantOrUpdateLock(acquireLock);
-            addOrUpdateLockToTransaction(acquireLock);
+        Boolean canGrant = isFront ? compatible : compatible && resourceEntry.waitingQueue.size() == 0;
+        if (canGrant) {
             if (releaseNames != null && releaseNames.size() > 0) {
                 for (ResourceName releaseName : releaseNames) {
                     if (releaseName.equals(name)) {
@@ -252,6 +250,8 @@ public class LockManager {
                     release(transaction, releaseName);
                 }
             }
+            resourceEntry.grantOrUpdateLock(acquireLock);
+            addOrUpdateLockToTransaction(acquireLock);
         } else {
             LockRequest lockRequest = new LockRequest(transaction, acquireLock, releaseNamesToLocks(transaction, releaseNames));
             resourceEntry.addToQueue(lockRequest, isFront);
@@ -269,7 +269,7 @@ public class LockManager {
         }
         boolean isNew = true;
         for (Lock lockExist : locks) {
-            if (lockExist.transactionNum.equals(lock.transactionNum)) {
+            if (lockExist.transactionNum.equals(lock.transactionNum) && lockExist.name.equals(lock.name)) {
                 lockExist.lockType = lock.lockType;
                 isNew = false;
                 break;
@@ -404,17 +404,17 @@ public class LockManager {
         synchronized (this) {
             ResourceEntry resourceEntry = getResourceEntry(name);
             LockType transactionLockType = resourceEntry.getTransactionLockType(transaction.getTransNum());
-            if (transactionLockType == null) {
+            if (transactionLockType == LockType.NL) {
                 throw new NoLockHeldException(String.format("transaction %d do not hold lock on resource %s", transaction.getTransNum(), name));
             }
             if (transactionLockType.equals(newLockType)) {
                 throw new DuplicateLockRequestException(String.format("transaction %d has held lock type %s on resource %s", transaction.getTransNum(), newLockType.toString(), name));
             }
-            if (LockType.substitutable(newLockType, transactionLockType)) {
+            if (!LockType.substitutable(newLockType, transactionLockType)) {
                 throw new InvalidLockException(String.format("transaction %d can't substitutable held lock type %s on resource %s with new lock type %s",
                         transaction.getTransNum(), transactionLockType.toString(), name, newLockType.toString()));
             }
-            shouldBlock = acquireAndRelease(resourceEntry, transaction, name, newLockType, null, false);
+            shouldBlock = acquireAndRelease(resourceEntry, transaction, name, newLockType, null, true);
         }
         if (shouldBlock) {
             transaction.block();
